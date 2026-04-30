@@ -157,6 +157,36 @@ def test_password_reset_confirm_rejects_bad_code(api_client, user):
 
 
 # ---------------------------------------------------------------------------
+# cleanup_otps management command
+# ---------------------------------------------------------------------------
+
+
+def test_cleanup_otps_removes_expired_and_old_used(user):
+    from datetime import timedelta
+    from django.core.management import call_command
+    from django.utils import timezone
+
+    OTPCode.objects.create(
+        identifier=user.email, purpose="signup_verify",
+        code_hash="x", expires_at=timezone.now() - timedelta(hours=1),
+    )
+    OTPCode.objects.create(
+        identifier=user.email, purpose="signup_verify",
+        code_hash="y", expires_at=timezone.now() - timedelta(days=10),
+        is_used=True, used_at=timezone.now() - timedelta(days=10),
+    )
+    fresh = OTPCode.objects.create(
+        identifier=user.email, purpose="signup_verify",
+        code_hash="z", expires_at=timezone.now() + timedelta(minutes=5),
+    )
+
+    call_command("cleanup_otps")
+
+    assert OTPCode.objects.filter(pk=fresh.pk).exists()
+    assert OTPCode.objects.count() == 1
+
+
+# ---------------------------------------------------------------------------
 # Mail outbox fixture (pytest-django provides it but uses 'mailoutbox')
 # ---------------------------------------------------------------------------
 

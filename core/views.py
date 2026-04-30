@@ -21,6 +21,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import AuthenticationFailed, NotFound, ValidationError
 from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -679,6 +680,7 @@ class OTPSendView(APIView):
     """
 
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
     throttle_scope = "otp_send"
 
     @extend_schema(request=OTPSendSerializer, responses={200: None})
@@ -733,6 +735,7 @@ class OTPVerifyView(APIView):
 
 class PasswordResetRequestView(APIView):
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
     throttle_scope = "otp_send"
 
     @extend_schema(request=PasswordResetRequestSerializer, responses={200: None})

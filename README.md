@@ -88,3 +88,23 @@ OpenAPI schema at `http://localhost:8000/api/schema/`.
 - Standard envelope on errors: `{"code": <int>, "message": <str>, "errors": <obj?>}`.
 - Page size is 20 by default (`?page_size=` overrides up to 100).
 - Filtering: `?<field>=<value>`. Searching: `?search=<term>`. Ordering: `?ordering=<field>`.
+
+## Operations
+
+- `python manage.py cleanup_otps` — schedule via cron / systemd / Celery beat.
+  Removes expired codes and used codes older than 7 days
+  (`--keep-used-for-days N` to override; `--dry-run` to preview).
+- `python manage.py create_admin` — idempotent. Promotes / refreshes the
+  default administrator account from `DEFAULT_ADMIN_*` env vars.
+
+## Deploying
+
+- `python manage.py migrate` on every deploy (auto-creates the default admin).
+- `python manage.py collectstatic --noinput` once per deploy (Swagger/admin assets).
+- Set `DJANGO_DEBUG=False` and `DJANGO_ALLOWED_HOSTS=<your-host>`.
+- `MEDIA_ROOT` (default `./media/`) needs persistent storage for avatar uploads.
+  In production, swap to S3/Bunny/Cloudinary by changing
+  `DEFAULT_FILE_STORAGE` — `AvatarUploadView` already returns whatever
+  `default_storage.url()` produces.
+- Schedule `cleanup_otps` (e.g. nightly).
+- For Flutter web later, append origins to `CORS_ALLOWED_ORIGINS`.

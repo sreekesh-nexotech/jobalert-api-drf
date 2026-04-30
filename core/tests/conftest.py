@@ -26,7 +26,16 @@ def make_user(db, password):
 
     counter = {"n": 0}
 
-    def _make(*, email=None, username=None, is_staff=False, is_superuser=False, **extra):
+    def _make(
+        *,
+        email=None,
+        username=None,
+        is_staff=False,
+        is_superuser=False,
+        country_code="",
+        mobile_number="",
+        **extra,
+    ):
         counter["n"] += 1
         n = counter["n"]
         user = User.objects.create_user(
@@ -35,6 +44,8 @@ def make_user(db, password):
             password=password,
             is_staff=is_staff,
             is_superuser=is_superuser,
+            country_code=country_code,
+            mobile_number=mobile_number,
             **extra,
         )
         UserDetails.objects.get_or_create(user=user)

@@ -41,28 +41,45 @@ OpenAPI schema at `http://localhost:8000/api/schema/`.
 
 | Group | Path | Methods |
 |-------|------|---------|
-| Auth | `/api/v1/auth/register/` | POST |
-| Auth | `/api/v1/auth/login/` | POST |
+| Auth | `/api/v1/auth/register/` | POST (issues JWT + emails signup OTP) |
+| Auth | `/api/v1/auth/login/` | POST (email **or** mobile) |
 | Auth | `/api/v1/auth/refresh/` | POST |
 | Auth | `/api/v1/auth/logout/` | POST |
+| Auth | `/api/v1/auth/change-password/` | POST |
+| Auth | `/api/v1/auth/otp/send/` | POST |
+| Auth | `/api/v1/auth/otp/verify/` | POST |
+| Auth | `/api/v1/auth/password-reset/request/` | POST |
+| Auth | `/api/v1/auth/password-reset/confirm/` | POST |
 | Users | `/api/v1/users/me/` | GET, PATCH |
+| Users | `/api/v1/users/me/avatar/` | POST (multipart) |
+| Users | `/api/v1/users/me/stats/` | GET |
+| Users | `/api/v1/users/me/request-deletion/` | POST |
 | Users | `/api/v1/user-details/` | CRUD |
+| Home | `/api/v1/home/feed/` | GET (personalised aggregate) |
 | Listings | `/api/v1/job-listings/` | CRUD |
 | Listings | `/api/v1/job-listings/{uid}/upvote/` | POST, DELETE |
 | Listings | `/api/v1/job-listings/{uid}/save/` | POST, DELETE |
 | Listings | `/api/v1/job-listings/{uid}/apply/` | POST |
-| Listings | `/api/v1/biz-listings/` | CRUD |
+| Listings | `/api/v1/job-listings/{uid}/view/` | POST |
+| Listings | `/api/v1/job-listings/{uid}/approve/` `…/reject/` | POST (admin) |
+| Listings | `/api/v1/biz-listings/` | CRUD (same actions as job-listings) |
+| Listings | `/api/v1/listings/can-submit/` | GET (plus-button gate) |
 | Engagement | `/api/v1/comments/` | CRUD |
+| Engagement | `/api/v1/comments/{uid}/like/` | POST, DELETE |
 | Engagement | `/api/v1/upvotes/` | List, Read |
 | User Data | `/api/v1/saved-listings/` | List |
-| User Data | `/api/v1/applied-listings/` | List |
 | User Data | `/api/v1/points/history/` | List |
 | Subs | `/api/v1/subscriptions/` | CRUD |
+| Notifications | `/api/v1/notifications/` | List, Read |
+| Notifications | `/api/v1/notifications/unread-count/` | GET |
+| Notifications | `/api/v1/notifications/{uid}/read/` | POST |
+| Notifications | `/api/v1/notifications/mark-all-read/` | POST |
 | Filters | `/api/v1/filter-prefs/` | CRUD |
 | Files | `/api/v1/files/` | CRUD |
-| Reports | `/api/v1/reports/` | CRUD |
-| Activity | `/api/v1/activity-logs/` | List, Read (admin) |
+| Reports | `/api/v1/reports/` | CRUD + admin `/review/` |
+| Activity | `/api/v1/activity-logs/` | POST (any), List/Read (admin) |
 | App Meta | `/api/v1/app-meta/` | CRUD (read public) |
+| Static Pages | `/api/v1/static-pages/` | CRUD by slug; admin write, public read |
 
 ## Conventions
 

@@ -28,7 +28,8 @@ from django.db import models
 
 class User(AbstractUser):
     """
-    Primary auth model. Email is the login credential.
+    Primary auth model. Email is the login credential, but the login view
+    also accepts the mobile number (country_code + mobile_number).
     Extends AbstractUser which already provides:
         id, username, first_name, last_name, email,
         password, is_active, is_staff, date_joined, last_login.
@@ -42,8 +43,20 @@ class User(AbstractUser):
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = ["username"]  # kept for createsuperuser compatibility
 
+    # Mobile (collected on signup; second login channel)
+    country_code  = models.CharField(max_length=6,  blank=True, default="")  # "+91"
+    mobile_number = models.CharField(max_length=20, blank=True, default="")  # digits only
+
     class Meta:
         db_table = "users"
+        constraints = [
+            # Mobile is unique when present; multiple blanks remain allowed.
+            models.UniqueConstraint(
+                fields=["country_code", "mobile_number"],
+                condition=~models.Q(mobile_number=""),
+                name="unique_user_mobile",
+            ),
+        ]
 
     def __str__(self):
         return self.email
@@ -532,6 +545,9 @@ class Comment(models.Model):
 
     text = models.TextField(max_length=2000)
 
+    # Denormalised likes counter; kept in sync by signals on CommentLike.
+    likes_count = models.PositiveIntegerField(default=0)
+
     # Soft delete — preserves thread structure when a comment is removed
     is_deleted = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
@@ -917,3 +933,173 @@ class ListingReport(models.Model):
 
     def __str__(self):
         return f"{self.user} reported {self.listing_type} — {self.reason}"
+
+
+# ---------------------------------------------------------------------------
+# 15. OTPCode
+# ---------------------------------------------------------------------------
+
+class OTPCode(models.Model):
+    """
+    Short-lived 6-digit codes used for email signup verification and password
+    resets. We keep one row per (identifier, purpose) and rotate on resend.
+    """
+
+    class Purpose(models.TextChoices):
+        SIGNUP_VERIFY  = "signup_verify",  "Sign-up verification"
+        PASSWORD_RESET = "password_reset", "Password reset"
+
+    # Identifier is usually the email address. Stored as text to keep open the
+    # door to mobile-OTP later without another schema change.
+    identifier = models.CharField(max_length=255, db_index=True)
+    purpose    = models.CharField(max_length=20, choices=Purpose.choices)
+
+    code_hash = models.CharField(max_length=128)       # never store the raw code
+    expires_at = models.DateTimeField()
+
+    attempts  = models.PositiveSmallIntegerField(default=0)  # incremented on wrong code
+    max_attempts = models.PositiveSmallIntegerField(default=5)
+
+    is_used   = models.BooleanField(default=False)
+    used_at   = models.DateTimeField(null=True, blank=True)
+
+    # Optional bind to a user (set once we know who they are)
+    user = models.ForeignKey(
+        "User", on_delete=models.CASCADE, null=True, blank=True,
+        related_name="otp_codes",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "otp_codes"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["identifier", "purpose"]),
+            models.Index(fields=["expires_at"]),
+        ]
+
+    def __str__(self):
+        return f"OTP {self.purpose} for {self.identifier}"
+
+
+# ---------------------------------------------------------------------------
+# 16. CommentLike
+# ---------------------------------------------------------------------------
+
+class CommentLike(models.Model):
+    """One like per (user, comment). Toggling deletes the row."""
+
+    user    = models.ForeignKey(User, on_delete=models.CASCADE, related_name="comment_likes")
+    comment = models.ForeignKey(Comment, on_delete=models.CASCADE, related_name="likes")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "comment_likes"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "comment"], name="unique_user_comment_like"
+            ),
+        ]
+        indexes = [models.Index(fields=["comment"])]
+
+    def __str__(self):
+        return f"{self.user.email} ♥ {self.comment_id}"
+
+
+# ---------------------------------------------------------------------------
+# 17. Notification
+# ---------------------------------------------------------------------------
+
+class Notification(models.Model):
+    """
+    In-app notifications. The `link_url` deep-links into a screen on tap;
+    related_* FKs let the UI render rich previews without re-fetching.
+    """
+
+    class NotificationType(models.TextChoices):
+        LISTING_APPROVED = "listing_approved", "Listing Approved"
+        LISTING_REJECTED = "listing_rejected", "Listing Rejected"
+        NEW_LISTING_MATCH = "new_listing_match", "New Listing Matches Your Preferences"
+        COMMENT_REPLY    = "comment_reply",    "Comment Reply"
+        POINTS_EARNED    = "points_earned",    "Points Earned"
+        PREMIUM_EXPIRING = "premium_expiring", "Premium Expiring Soon"
+        ANNOUNCEMENT     = "announcement",     "Announcement"
+
+    uid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="notifications"
+    )
+
+    notification_type = models.CharField(
+        max_length=25, choices=NotificationType.choices
+    )
+    title    = models.CharField(max_length=255)
+    message  = models.TextField()
+    link_url = models.URLField(max_length=500, blank=True)
+
+    related_job_listing = models.ForeignKey(
+        JobListing, on_delete=models.SET_NULL, null=True, blank=True
+    )
+    related_biz_listing = models.ForeignKey(
+        BizListing, on_delete=models.SET_NULL, null=True, blank=True
+    )
+    related_comment = models.ForeignKey(
+        Comment, on_delete=models.SET_NULL, null=True, blank=True
+    )
+
+    is_read    = models.BooleanField(default=False)
+    read_at    = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "notifications"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "is_read"]),
+            models.Index(fields=["user", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} — {self.notification_type}"
+
+
+# ---------------------------------------------------------------------------
+# 18. StaticPage
+# ---------------------------------------------------------------------------
+
+class StaticPage(models.Model):
+    """
+    Long-form static content surfaced in the Profile screen
+    (Privacy Policy, Terms of Service, Help & Support, About).
+    Slug-keyed so the client fetches a known page by name.
+    """
+
+    class Slug(models.TextChoices):
+        PRIVACY_POLICY   = "privacy_policy",   "Privacy Policy"
+        TERMS_OF_SERVICE = "terms_of_service", "Terms of Service"
+        HELP             = "help",             "Help & Support"
+        ABOUT            = "about",            "About"
+
+    slug    = models.CharField(max_length=50, unique=True, choices=Slug.choices)
+    title   = models.CharField(max_length=255)
+    body    = models.TextField()  # markdown or HTML, rendered client-side
+
+    is_published = models.BooleanField(default=True)
+    version      = models.PositiveIntegerField(default=1)  # bumped on every edit
+
+    updated_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="updated_static_pages",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "static_pages"
+
+    def __str__(self):
+        return self.title

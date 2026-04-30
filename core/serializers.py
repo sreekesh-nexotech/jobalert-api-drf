@@ -17,13 +17,17 @@ from core.models import (
     AppMetaData,
     BizListing,
     Comment,
+    CommentLike,
     FileManagement,
     FiltersMetaData,
     JobListing,
     ListingReport,
     ListingType,
+    Notification,
+    OTPCode,
     PointsHistory,
     SavedAndAppliedListing,
+    StaticPage,
     SubscriptionHistory,
     Upvote,
     User,
@@ -70,27 +74,41 @@ class _PolymorphicListingMixin:
 
 class UserSerializer(serializers.ModelSerializer):
     uid = serializers.UUIDField(read_only=True)
+    country_code  = serializers.CharField(required=False, allow_blank=True, default="")
+    mobile_number = serializers.CharField(required=False, allow_blank=True, default="")
 
     class Meta:
         model = User
         fields = [
             "uid", "email", "username", "first_name", "last_name",
+            "country_code", "mobile_number",
             "is_active", "date_joined", "last_login",
         ]
         read_only_fields = ["uid", "email", "is_active", "date_joined", "last_login"]
+        validators = []
 
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=True, validators=[validate_password])
     password_confirm = serializers.CharField(write_only=True, required=True)
+    # Declared explicitly so they bypass the auto-generated
+    # UniqueTogetherValidator (which would treat both as required).
+    country_code  = serializers.CharField(required=False, allow_blank=True, default="")
+    mobile_number = serializers.CharField(required=False, allow_blank=True, default="")
 
     class Meta:
         model = User
-        fields = ["email", "username", "password", "password_confirm", "first_name", "last_name"]
+        fields = [
+            "email", "username", "password", "password_confirm",
+            "first_name", "last_name", "country_code", "mobile_number",
+        ]
+        # Disable DRF's auto UniqueTogetherValidator — our explicit
+        # ``validate()`` does the duplicate-mobile check with friendlier copy.
+        validators = []
         extra_kwargs = {
             "first_name": {"required": False, "allow_blank": True},
-            "last_name": {"required": False, "allow_blank": True},
-            "username": {"required": False},
+            "last_name":  {"required": False, "allow_blank": True},
+            "username":   {"required": False},
         }
 
     def validate_email(self, value):
@@ -98,9 +116,27 @@ class RegisterSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("A user with this email already exists.")
         return value.lower()
 
+    def validate_mobile_number(self, value):
+        # Strip non-digits for canonical storage.
+        digits = "".join(ch for ch in (value or "") if ch.isdigit())
+        if digits and len(digits) < 7:
+            raise serializers.ValidationError("Enter a valid mobile number.")
+        return digits
+
     def validate(self, attrs):
         if attrs["password"] != attrs.pop("password_confirm"):
             raise serializers.ValidationError({"password": "Passwords do not match."})
+
+        cc = attrs.get("country_code", "")
+        mob = attrs.get("mobile_number", "")
+        if mob and not cc:
+            raise serializers.ValidationError(
+                {"country_code": "Country code is required when mobile number is provided."}
+            )
+        if mob and User.objects.filter(country_code=cc, mobile_number=mob).exists():
+            raise serializers.ValidationError(
+                {"mobile_number": "A user with this mobile number already exists."}
+            )
         return attrs
 
     @transaction.atomic
@@ -318,11 +354,11 @@ class CommentSerializer(_PolymorphicListingMixin, serializers.ModelSerializer):
         fields = [
             "uid", "user", "listing_type", "listing_uid",
             "target_listing_uid", "parent_comment_uid", "parent_comment",
-            "text", "is_deleted", "replies_count",
+            "text", "is_deleted", "replies_count", "likes_count",
             "created_at", "updated_at",
         ]
         read_only_fields = [
-            "uid", "user", "is_deleted", "created_at", "updated_at",
+            "uid", "user", "is_deleted", "likes_count", "created_at", "updated_at",
         ]
 
     def get_parent_comment(self, obj):
@@ -525,3 +561,154 @@ class ListingReportReviewSerializer(serializers.Serializer):
 
     status = serializers.ChoiceField(choices=ListingReport.ReportStatus.choices)
     reviewer_notes = serializers.CharField(required=False, allow_blank=True)
+
+
+# ---------------------------------------------------------------------------
+# OTP / password reset / login by email-or-mobile
+# ---------------------------------------------------------------------------
+
+
+class OTPSendSerializer(serializers.Serializer):
+    """Request payload for issuing an OTP. ``identifier`` is an email."""
+
+    identifier = serializers.CharField()
+    purpose = serializers.ChoiceField(choices=OTPCode.Purpose.choices)
+
+    def validate_identifier(self, value):
+        return value.strip().lower()
+
+
+class OTPVerifySerializer(serializers.Serializer):
+    identifier = serializers.CharField()
+    purpose    = serializers.ChoiceField(choices=OTPCode.Purpose.choices)
+    code       = serializers.CharField(min_length=4, max_length=10)
+
+    def validate_identifier(self, value):
+        return value.strip().lower()
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    email        = serializers.EmailField()
+    code         = serializers.CharField(min_length=4, max_length=10)
+    new_password = serializers.CharField(validators=[validate_password])
+
+
+class LoginByIdentifierSerializer(serializers.Serializer):
+    """Login by email *or* country_code+mobile_number. Returns JWT pair."""
+
+    identifier = serializers.CharField(help_text="Email or mobile number")
+    country_code = serializers.CharField(required=False, allow_blank=True)
+    password = serializers.CharField(write_only=True)
+
+
+# ---------------------------------------------------------------------------
+# Comment likes
+# ---------------------------------------------------------------------------
+
+
+class CommentLikeSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
+    comment_uid = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CommentLike
+        fields = ["id", "user", "comment_uid", "created_at"]
+        read_only_fields = fields
+
+    def get_comment_uid(self, obj):
+        return str(obj.comment.uid)
+
+
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    related_job_listing_uid = serializers.SerializerMethodField()
+    related_biz_listing_uid = serializers.SerializerMethodField()
+    related_comment_uid     = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Notification
+        fields = [
+            "uid", "notification_type", "title", "message", "link_url",
+            "related_job_listing_uid", "related_biz_listing_uid",
+            "related_comment_uid",
+            "is_read", "read_at", "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_related_job_listing_uid(self, obj):
+        return str(obj.related_job_listing.uid) if obj.related_job_listing_id else None
+
+    def get_related_biz_listing_uid(self, obj):
+        return str(obj.related_biz_listing.uid) if obj.related_biz_listing_id else None
+
+    def get_related_comment_uid(self, obj):
+        return str(obj.related_comment.uid) if obj.related_comment_id else None
+
+
+# ---------------------------------------------------------------------------
+# Static pages
+# ---------------------------------------------------------------------------
+
+
+class StaticPageSerializer(serializers.ModelSerializer):
+    updated_by = UserSerializer(read_only=True)
+
+    class Meta:
+        model = StaticPage
+        fields = [
+            "slug", "title", "body", "is_published", "version",
+            "updated_by", "created_at", "updated_at",
+        ]
+        read_only_fields = ["version", "updated_by", "created_at", "updated_at"]
+
+
+# ---------------------------------------------------------------------------
+# Profile stats / avatar / pending-listing check
+# ---------------------------------------------------------------------------
+
+
+class ProfileStatsSerializer(serializers.Serializer):
+    posts          = serializers.IntegerField()
+    saved          = serializers.IntegerField()
+    upvotes_given  = serializers.IntegerField()
+    points         = serializers.IntegerField()
+    points_level   = serializers.CharField()
+    next_level     = serializers.CharField(allow_null=True)
+    next_level_at  = serializers.IntegerField(allow_null=True)
+    progress_pct   = serializers.IntegerField()
+    is_premium     = serializers.BooleanField()
+    premium_expires_at = serializers.DateTimeField(allow_null=True)
+
+
+class AvatarUploadSerializer(serializers.Serializer):
+    image = serializers.ImageField(write_only=True)
+    profile_picture_url = serializers.URLField(read_only=True)
+
+
+class CanSubmitListingSerializer(serializers.Serializer):
+    can_submit = serializers.BooleanField()
+    pending_listing_type = serializers.CharField(allow_null=True)
+    pending_listing_uid  = serializers.UUIDField(allow_null=True)
+    pending_title        = serializers.CharField(allow_null=True)
+    pending_submitted_at = serializers.DateTimeField(allow_null=True)
+
+
+# ---------------------------------------------------------------------------
+# Home feed
+# ---------------------------------------------------------------------------
+
+
+class HomeFeedSerializer(serializers.Serializer):
+    new_jobs_count   = serializers.IntegerField()
+    suggested_jobs   = JobListingSerializer(many=True)
+    trending_biz     = BizListingSerializer(many=True)
+    unread_notifications = serializers.IntegerField()
+    stats            = ProfileStatsSerializer()

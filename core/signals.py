@@ -33,8 +33,10 @@ from django.utils import timezone
 from core.models import (
     BizListing,
     Comment,
+    CommentLike,
     JobListing,
     ListingStatus,
+    Notification,
     PointsHistory,
     SavedAndAppliedListing,
     SubscriptionHistory,
@@ -276,3 +278,90 @@ def subscription_post_save(sender, instance, created, **kwargs):
                 subscription_start=instance.subscription_start or timezone.now(),
                 subscription_end=instance.subscription_end or expires,
             )
+
+
+# ---------------------------------------------------------------------------
+# Comment likes
+# ---------------------------------------------------------------------------
+
+
+@receiver(post_save, sender=CommentLike)
+def comment_like_created(sender, instance, created, **kwargs):
+    if created:
+        Comment.objects.filter(pk=instance.comment_id).update(
+            likes_count=F("likes_count") + 1
+        )
+
+
+@receiver(post_delete, sender=CommentLike)
+def comment_like_deleted(sender, instance, **kwargs):
+    Comment.objects.filter(pk=instance.comment_id).update(
+        likes_count=F("likes_count") - 1
+    )
+
+
+# ---------------------------------------------------------------------------
+# Notification fan-out
+# ---------------------------------------------------------------------------
+
+
+def _notify(user, *, notification_type, title, message, **related):
+    if user is None:
+        return
+    Notification.objects.create(
+        user=user,
+        notification_type=notification_type,
+        title=title,
+        message=message,
+        **{k: v for k, v in related.items() if v is not None},
+    )
+
+
+def _attach_notification_signals(model):
+    @receiver(post_save, sender=model, weak=False)
+    def listing_status_notification(sender, instance, created, **kwargs):
+        if created:
+            return
+        old = getattr(instance, "_old_status", None)
+        if old == instance.status:
+            return
+        if instance.status == ListingStatus.APPROVED:
+            _notify(
+                instance.posted_by,
+                notification_type=Notification.NotificationType.LISTING_APPROVED,
+                title="Your listing was approved",
+                message=f"\"{instance.title}\" is now live. You earned 50 points!",
+                related_job_listing=instance if isinstance(instance, JobListing) else None,
+                related_biz_listing=instance if isinstance(instance, BizListing) else None,
+            )
+        elif instance.status == ListingStatus.REJECTED:
+            _notify(
+                instance.posted_by,
+                notification_type=Notification.NotificationType.LISTING_REJECTED,
+                title="Your listing was not approved",
+                message=f"\"{instance.title}\" was rejected by our review team.",
+                related_job_listing=instance if isinstance(instance, JobListing) else None,
+                related_biz_listing=instance if isinstance(instance, BizListing) else None,
+            )
+
+
+_attach_notification_signals(JobListing)
+_attach_notification_signals(BizListing)
+
+
+@receiver(post_save, sender=Comment)
+def comment_reply_notification(sender, instance, created, **kwargs):
+    """When a reply is posted, ping the parent comment's author."""
+    if not created or instance.is_deleted or not instance.parent_comment_id:
+        return
+    parent = instance.parent_comment
+    if parent.user_id and parent.user_id != instance.user_id:
+        _notify(
+            parent.user,
+            notification_type=Notification.NotificationType.COMMENT_REPLY,
+            title="Someone replied to your comment",
+            message=instance.text[:200],
+            related_comment=instance,
+            related_job_listing=instance.job_listing,
+            related_biz_listing=instance.biz_listing,
+        )

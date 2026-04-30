@@ -74,7 +74,7 @@ def test_register_is_unauthenticated(api_client):
 def test_login_returns_jwt_pair(api_client, user, password):
     res = api_client.post(
         reverse("v1:auth-login"),
-        {"email": user.email, "password": password},
+        {"identifier": user.email, "password": password},
         format="json",
     )
     assert res.status_code == 200
@@ -84,7 +84,7 @@ def test_login_returns_jwt_pair(api_client, user, password):
 def test_login_with_wrong_password_fails(api_client, user):
     res = api_client.post(
         reverse("v1:auth-login"),
-        {"email": user.email, "password": "wrong"},
+        {"identifier": user.email, "password": "wrong"},
         format="json",
     )
     assert res.status_code == 401
@@ -93,7 +93,7 @@ def test_login_with_wrong_password_fails(api_client, user):
 def test_refresh_rotates_token(api_client, user, password):
     login = api_client.post(
         reverse("v1:auth-login"),
-        {"email": user.email, "password": password},
+        {"identifier": user.email, "password": password},
         format="json",
     )
     refresh = login.data["refresh"]
@@ -105,7 +105,7 @@ def test_refresh_rotates_token(api_client, user, password):
 def test_logout_blacklists_refresh_token(api_client, user, password):
     login = api_client.post(
         reverse("v1:auth-login"),
-        {"email": user.email, "password": password},
+        {"identifier": user.email, "password": password},
         format="json",
     )
     refresh = login.data["refresh"]

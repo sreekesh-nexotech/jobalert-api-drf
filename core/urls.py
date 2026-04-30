@@ -9,19 +9,31 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from core.views import (
     AppMetaDataViewSet,
+    AvatarUploadView,
     BizListingViewSet,
+    CanSubmitListingView,
     ChangePasswordView,
+    CommentLikeToggleView,
     CommentViewSet,
     CurrentUserView,
     FileManagementViewSet,
     FiltersMetaDataViewSet,
+    HomeFeedView,
     JobListingViewSet,
     ListingReportViewSet,
     LoginView,
     LogoutView,
+    NotificationViewSet,
+    OTPSendView,
+    OTPVerifyView,
+    PasswordResetConfirmView,
+    PasswordResetRequestView,
     PointsHistoryViewSet,
+    ProfileStatsView,
     RegisterView,
+    RequestAccountDeletionView,
     SavedAndAppliedListingViewSet,
+    StaticPageViewSet,
     SubscriptionHistoryViewSet,
     UpvoteViewSet,
     UserActivityLogViewSet,
@@ -42,6 +54,8 @@ router.register(r"app-meta", AppMetaDataViewSet, basename="app-meta")
 router.register(r"activity-logs", UserActivityLogViewSet, basename="activity-log")
 router.register(r"reports", ListingReportViewSet, basename="report")
 router.register(r"user-details", UserDetailsViewSet, basename="user-details")
+router.register(r"notifications", NotificationViewSet, basename="notification")
+router.register(r"static-pages", StaticPageViewSet, basename="static-page")
 
 auth_patterns = [
     path("register/", RegisterView.as_view(), name="auth-register"),
@@ -49,14 +63,52 @@ auth_patterns = [
     path("refresh/", TokenRefreshView.as_view(), name="auth-refresh"),
     path("logout/", LogoutView.as_view(), name="auth-logout"),
     path("change-password/", ChangePasswordView.as_view(), name="auth-change-password"),
+    path("otp/send/", OTPSendView.as_view(), name="auth-otp-send"),
+    path("otp/verify/", OTPVerifyView.as_view(), name="auth-otp-verify"),
+    path(
+        "password-reset/request/",
+        PasswordResetRequestView.as_view(),
+        name="auth-password-reset-request",
+    ),
+    path(
+        "password-reset/confirm/",
+        PasswordResetConfirmView.as_view(),
+        name="auth-password-reset-confirm",
+    ),
 ]
 
 user_patterns = [
     path("me/", CurrentUserView.as_view(), name="user-me"),
+    path("me/avatar/", AvatarUploadView.as_view(), name="user-me-avatar"),
+    path("me/stats/", ProfileStatsView.as_view(), name="user-me-stats"),
+    path(
+        "me/request-deletion/",
+        RequestAccountDeletionView.as_view(),
+        name="user-me-request-deletion",
+    ),
+]
+
+listing_patterns = [
+    path("can-submit/", CanSubmitListingView.as_view(), name="listing-can-submit"),
+]
+
+comment_like_patterns = [
+    path(
+        "<uuid:uid>/like/",
+        CommentLikeToggleView.as_view(),
+        name="comment-like-toggle",
+    ),
+]
+
+home_patterns = [
+    path("feed/", HomeFeedView.as_view(), name="home-feed"),
 ]
 
 urlpatterns = [
     path("auth/", include(auth_patterns)),
     path("users/", include(user_patterns)),
+    path("listings/", include(listing_patterns)),
+    path("comments/", include(comment_like_patterns)),
+    path("home/", include(home_patterns)),
     path("", include(router.urls)),
 ]

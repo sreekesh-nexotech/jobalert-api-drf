@@ -459,15 +459,29 @@ class AppMetaDataSerializer(serializers.ModelSerializer):
 class UserActivityLogSerializer(_PolymorphicListingMixin, serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
     listing_uid = serializers.SerializerMethodField()
+    listing_type = serializers.ChoiceField(
+        choices=ListingType.choices, required=False, allow_blank=True
+    )
+    target_listing_uid = serializers.UUIDField(required=False, write_only=True)
 
     class Meta:
         model = UserActivityLog
         fields = [
             "id", "user", "action_type", "listing_type", "listing_uid",
+            "target_listing_uid",
             "ip_address", "device_type", "app_version",
             "metadata", "created_at",
         ]
-        read_only_fields = fields
+        read_only_fields = ["id", "user", "ip_address", "created_at"]
+
+    def validate(self, attrs):
+        listing_type = attrs.get("listing_type")
+        target_uid = attrs.pop("target_listing_uid", None)
+        if listing_type and target_uid:
+            job, biz = _resolve_listing(listing_type, target_uid)
+            attrs["job_listing"] = job
+            attrs["biz_listing"] = biz
+        return attrs
 
 
 class ListingReportSerializer(_PolymorphicListingMixin, serializers.ModelSerializer):
